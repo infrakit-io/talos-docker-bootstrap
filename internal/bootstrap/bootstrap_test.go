@@ -139,8 +139,8 @@ func TestRunDryRunPlansAllSteps(t *testing.T) {
 	if res.Status != "planned" {
 		t.Fatalf("expected planned status, got %q", res.Status)
 	}
-	if len(res.Steps) != 5 {
-		t.Fatalf("expected 5 planned steps, got %d", len(res.Steps))
+	if len(res.Steps) != 6 {
+		t.Fatalf("expected 6 planned steps, got %d", len(res.Steps))
 	}
 }
 
@@ -164,8 +164,8 @@ func TestRunSuccessWithInjectedSteps(t *testing.T) {
 	if res.Status != "success" {
 		t.Fatalf("expected success status, got %q", res.Status)
 	}
-	if len(res.Steps) != 5 {
-		t.Fatalf("expected 5 steps, got %d", len(res.Steps))
+	if len(res.Steps) != 6 {
+		t.Fatalf("expected 6 steps, got %d", len(res.Steps))
 	}
 }
 
@@ -343,12 +343,14 @@ func TestStartStepHeartbeatCanStartAndStop(t *testing.T) {
 func patchRunDeps() func() {
 	origWait := waitForTCPPortWithStatsFn
 	origHardening := runOSHardeningFn
+	origTimeSync := runTimeSyncFn
 	origDocker := runDockerInstallFn
 	origTalos := runTalosctlInstallFn
 	origCluster := runClusterCreateFn
 	return func() {
 		waitForTCPPortWithStatsFn = origWait
 		runOSHardeningFn = origHardening
+		runTimeSyncFn = origTimeSync
 		runDockerInstallFn = origDocker
 		runTalosctlInstallFn = origTalos
 		runClusterCreateFn = origCluster

@@ -59,12 +59,12 @@ func newBootstrapCmd() *cobra.Command {
 			if human {
 				fmt.Printf("\n\033[32m✓ bootstrap completed\033[0m\n")
 				fmt.Printf("  VM:      \033[36m%s\033[0m\n", cfg.VM.Host)
-				fmt.Printf("  Cluster: \033[36m%s\033[0m\n", cfg.Cluster.Name)
+				fmt.Printf("  Cluster: \033[36m%s\033[0m\n", clusterLabel(cfg))
 				fmt.Printf("  Total:   \033[36m%s\033[0m\n", time.Since(res.StartedAt).Truncate(time.Millisecond))
 			} else {
 				logger.Info("bootstrap completed",
 					"vm", cfg.VM.Host,
-					"cluster", cfg.Cluster.Name,
+					"cluster", clusterLabel(cfg),
 					"duration", time.Since(res.StartedAt).String(),
 				)
 			}

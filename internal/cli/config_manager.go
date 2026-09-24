@@ -50,11 +50,17 @@ type stage2File struct {
 		SHA256Checksum string `yaml:"sha256_checksum"`
 	} `yaml:"talos"`
 	Cluster struct {
+		Enabled  *bool  `yaml:"enabled,omitempty"`
 		Name     string `yaml:"name"`
 		StateDir string `yaml:"state_dir"`
 		MountSrc string `yaml:"mount_src"`
 		MountDst string `yaml:"mount_dst"`
 	} `yaml:"cluster"`
+	TimeSync struct {
+		Enabled     bool     `yaml:"enabled"`
+		Servers     []string `yaml:"servers,omitempty"`
+		WaitSeconds int      `yaml:"wait_seconds,omitempty"`
+	} `yaml:"time_sync"`
 	Timeouts struct {
 		SSHConnectSeconds int `yaml:"ssh_connect_seconds"`
 		SSHRetries        int `yaml:"ssh_retries"`
@@ -295,21 +301,28 @@ func upsertStage2(path string, edit bool, draftPath string) error {
 		}
 	}
 
-	cfg.Docker.Version = askString(versionPrompt("Docker version", toolVersions.Docker.LatestVersion, toolVersions.Docker.LatestReleaseDate), cfg.Docker.Version)
-	cfg.Talos.Version = askString(versionPrompt("Talosctl version", toolVersions.Talosctl.LatestVersion, toolVersions.Talosctl.LatestReleaseDate), cfg.Talos.Version)
-	checksum, err := resolveTalosChecksum(toolVersions, cfg.Talos.Version)
-	if err != nil {
-		return fmt.Errorf("resolve talosctl checksum for version %q: %w", cfg.Talos.Version, err)
-	}
-	cfg.Talos.SHA256Checksum = checksum
-	applyClusterNameFallback(&cfg)
+	cfg.TimeSync.Enabled = askBool("Ensure NTP time sync and verify the clock is synchronized", cfg.TimeSync.Enabled)
 
-	previousClusterName := cfg.Cluster.Name
-	cfg.Cluster.Name = askString("Cluster name", cfg.Cluster.Name)
-	cfg.Cluster.StateDir = adjustStateDirForClusterName(cfg.Cluster.StateDir, previousClusterName, cfg.Cluster.Name)
-	cfg.Cluster.StateDir = askString("Cluster state dir", cfg.Cluster.StateDir)
-	cfg.Cluster.MountSrc = askString("Talos host path (mount source)", cfg.Cluster.MountSrc)
-	cfg.Cluster.MountDst = askString("Talos node path (mount destination)", cfg.Cluster.MountDst)
+	cfg.Docker.Version = askString(versionPrompt("Docker version", toolVersions.Docker.LatestVersion, toolVersions.Docker.LatestReleaseDate), cfg.Docker.Version)
+
+	clusterEnabled := askBool("Create a Talos-in-Docker Kubernetes cluster (no = Docker host only)", stage2ClusterEnabled(cfg))
+	setStage2ClusterEnabled(&cfg, clusterEnabled)
+	if clusterEnabled {
+		cfg.Talos.Version = askString(versionPrompt("Talosctl version", toolVersions.Talosctl.LatestVersion, toolVersions.Talosctl.LatestReleaseDate), cfg.Talos.Version)
+		checksum, err := resolveTalosChecksum(toolVersions, cfg.Talos.Version)
+		if err != nil {
+			return fmt.Errorf("resolve talosctl checksum for version %q: %w", cfg.Talos.Version, err)
+		}
+		cfg.Talos.SHA256Checksum = checksum
+		applyClusterNameFallback(&cfg)
+
+		previousClusterName := cfg.Cluster.Name
+		cfg.Cluster.Name = askString("Cluster name", cfg.Cluster.Name)
+		cfg.Cluster.StateDir = adjustStateDirForClusterName(cfg.Cluster.StateDir, previousClusterName, cfg.Cluster.Name)
+		cfg.Cluster.StateDir = askString("Cluster state dir", cfg.Cluster.StateDir)
+		cfg.Cluster.MountSrc = askString("Talos host path (mount source)", cfg.Cluster.MountSrc)
+		cfg.Cluster.MountDst = askString("Talos node path (mount destination)", cfg.Cluster.MountDst)
+	}
 
 	if askBool("Customize connectivity/timeouts (advanced)", false) {
 		cfg.Timeouts.SSHConnectSeconds = askInt("SSH connect seconds", cfg.Timeouts.SSHConnectSeconds)
@@ -632,6 +645,23 @@ func applySmartStage2Defaults(cfg *stage2File) {
 		cfg.VM.Port = bootstrapVM.VM.SSHPort
 	}
 	applyClusterNameFallback(cfg)
+}
+
+// stage2ClusterEnabled mirrors config.ClusterConfig.IsEnabled for the wizard's
+// file model: an omitted cluster.enabled means enabled.
+func stage2ClusterEnabled(cfg stage2File) bool {
+	return cfg.Cluster.Enabled == nil || *cfg.Cluster.Enabled
+}
+
+// setStage2ClusterEnabled writes cluster.enabled only when it is false, so a
+// config that keeps the default stays byte-compatible with older versions.
+func setStage2ClusterEnabled(cfg *stage2File, enabled bool) {
+	if enabled {
+		cfg.Cluster.Enabled = nil
+		return
+	}
+	disabled := false
+	cfg.Cluster.Enabled = &disabled
 }
 
 func normalizeClusterName(in string) string {

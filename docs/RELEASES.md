@@ -3,10 +3,19 @@
 ## Unreleased
 
 Highlights:
-- TBD
+- `cluster.enabled` (default `true` when omitted): set `false` to stop after SSH check, OS hardening,
+  time sync and Docker. `talos.*` and the cluster name/state/mount fields are then not required, the
+  `talosctl_install` and `cluster_create` steps are recorded as `skipped`, and `cluster-status`,
+  `kubeconfig-export` and `mount-check` refuse with a clear message instead of querying a cluster that
+  does not exist. This makes the tool usable for plain Docker hosts (e.g. single-VM Compose deployments).
+- New `time_sync` step (opt-in, `time_sync.enabled: true`): keeps the active daemon (chrony if running,
+  otherwise systemd-timesyncd, installed if missing), optionally sets `time_sync.servers`, then waits up
+  to `time_sync.wait_seconds` (default 120) for `timedatectl NTPSynchronized=yes` and fails otherwise.
 
 Notes:
-- TBD
+- Existing configs behave exactly as before: an omitted `cluster.enabled` means enabled and `time_sync`
+  defaults to disabled (its step is recorded as `skipped`). The result JSON gains one `time_sync` step entry.
+- `time_sync.servers` entries are validated as hostnames/IP literals because they are written into a remote script.
 
 ## v0.2.1 (2026-03-01)
 

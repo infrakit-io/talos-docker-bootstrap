@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -144,6 +145,12 @@ func newMountCheckCmd() *cobra.Command {
 }
 
 func explainClusterOpError(err error, cfg config.Config) error {
+	if errors.Is(err, bootstrap.ErrClusterDisabled) {
+		return &userError{
+			msg:  "this config has no Talos cluster (cluster.enabled: false)",
+			hint: "Set cluster.enabled: true (with talos.* and cluster.* filled) and run: make talos-bootstrap",
+		}
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "No Talos-in-Docker cluster found on remote VM.") {
 		return &userError{
@@ -158,4 +165,13 @@ func explainClusterOpError(err error, cfg config.Config) error {
 		}
 	}
 	return err
+}
+
+// clusterLabel names the cluster for human/log summaries, or says there is
+// none when the config switches the Talos steps off.
+func clusterLabel(cfg config.Config) string {
+	if !cfg.Cluster.IsEnabled() {
+		return "disabled (docker host only)"
+	}
+	return cfg.Cluster.Name
 }

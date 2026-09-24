@@ -117,12 +117,12 @@ func newProvisionAndBootstrapCmd() *cobra.Command {
 			if human {
 				fmt.Printf("\n\033[32m✓ workflow completed\033[0m\n")
 				fmt.Printf("  VM:      \033[36m%s\033[0m\n", stage2Cfg.VM.Host)
-				fmt.Printf("  Cluster: \033[36m%s\033[0m\n", stage2Cfg.Cluster.Name)
+				fmt.Printf("  Cluster: \033[36m%s\033[0m\n", clusterLabel(stage2Cfg))
 				fmt.Printf("  Total:   \033[36m%s\033[0m\n", time.Since(res.StartedAt).Truncate(time.Millisecond))
 			} else {
 				logger.Info("workflow completed",
 					"vm", stage2Cfg.VM.Host,
-					"cluster", stage2Cfg.Cluster.Name,
+					"cluster", clusterLabel(stage2Cfg),
 					"duration", time.Since(res.StartedAt).String(),
 				)
 			}
