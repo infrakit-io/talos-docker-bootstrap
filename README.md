@@ -16,6 +16,8 @@ Enterprise-grade post-bootstrap for Ubuntu dev VMs.
 - Install and verify Docker
 - Install and verify talosctl
 - Create Talos-in-Docker cluster idempotently (single-node controlplane by default)
+- Optional: verify NTP time sync (`time_sync.enabled`)
+- Optional: stop after Docker for plain Docker hosts (`cluster.enabled: false`, see `configs/docker-host.example.yaml`)
 
 ## Status
 
