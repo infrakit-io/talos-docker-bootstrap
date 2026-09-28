@@ -103,3 +103,28 @@ func mustValidStage2Config(t *testing.T) config.Config {
 	}
 	return cfg
 }
+
+func TestMergeBootstrapIntoDockerHostOnlyConfig(t *testing.T) {
+	disabled := false
+	base := config.Config{
+		VM:        config.VMConfig{Port: 22, KnownHostsMode: "strict"},
+		Hardening: config.HardeningConfig{Enabled: true, EnableUFW: true, AllowTCPPorts: []int{22}},
+		Docker:    config.DockerConfig{Version: "28.5.2"},
+		Cluster:   config.ClusterConfig{Enabled: &disabled},
+		TimeSync:  config.TimeSyncConfig{Enabled: true},
+		Timeouts:  config.TimeoutsConfig{SSHConnectSeconds: 5, SSHRetries: 1, SSHRetryDelaySec: 1, TotalMinutes: 1},
+	}
+	got, err := MergeBootstrapIntoStage2(base, BootstrapResult{
+		VMName:        "app-01",
+		IPAddress:     "192.168.1.60",
+		SSHUser:       "sysadmin",
+		SSHPrivateKey: "/tmp/key",
+		SSHPort:       22,
+	})
+	if err != nil {
+		t.Fatalf("docker-host merge must validate without talos fields: %v", err)
+	}
+	if got.Cluster.IsEnabled() || got.VM.Host != "192.168.1.60" {
+		t.Fatalf("unexpected merge result: %#v", got)
+	}
+}

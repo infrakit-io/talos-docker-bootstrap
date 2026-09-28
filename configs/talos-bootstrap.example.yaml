@@ -28,10 +28,22 @@ talos:
   sha256_checksum: "0000000000000000000000000000000000000000000000000000000000000000"
 
 cluster:
+  # Set to false for a plain Docker host: talosctl_install and cluster_create are
+  # skipped and the talos.* / cluster name/state/mount fields are not required.
+  # Omitted = true (default).
+  enabled: true
   name: "devvm"
   state_dir: "~/.talos/clusters/devvm"
   mount_src: "~/work"
   mount_dst: /var/mnt/work
+
+# Optional NTP verification (recommended for production hosts).
+time_sync:
+  enabled: false
+  # Empty keeps the distribution's NTP servers.
+  servers: []
+  # Max seconds to wait for timedatectl NTPSynchronized=yes (0 = 120).
+  wait_seconds: 120
 
 timeouts:
   ssh_connect_seconds: 5

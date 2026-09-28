@@ -1,0 +1,34 @@
+# Plain Docker host: OS hardening + time sync + pinned Docker, no Talos cluster.
+# Usage: talos-docker-bootstrap bootstrap --config configs/docker-host.yaml
+vm:
+  host: "192.168.1.20"
+  port: 22
+  user: "sysadmin"
+  ssh_private_key: "~/.ssh/id_ed25519"
+  known_hosts_file: "~/.ssh/known_hosts"
+  known_hosts_mode: strict
+  ssh_host_fingerprint: ""
+
+hardening:
+  enabled: true
+  allow_password_ssh: false
+  enable_ufw: true
+  allow_tcp_ports:
+    - 22
+
+time_sync:
+  enabled: true
+  servers: []
+  wait_seconds: 120
+
+docker:
+  version: "28.5.2"
+
+cluster:
+  enabled: false
+
+timeouts:
+  ssh_connect_seconds: 5
+  ssh_retries: 12
+  ssh_retry_delay_seconds: 10
+  total_minutes: 30

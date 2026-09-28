@@ -18,6 +18,7 @@ type Config struct {
 	Docker    DockerConfig    `yaml:"docker"`
 	Talos     TalosConfig     `yaml:"talos"`
 	Cluster   ClusterConfig   `yaml:"cluster"`
+	TimeSync  TimeSyncConfig  `yaml:"time_sync"`
 	Timeouts  TimeoutsConfig  `yaml:"timeouts"`
 }
 
@@ -25,7 +26,19 @@ var (
 	safeVersionTokenRE = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
 	sha256HexRE        = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
 	sshFingerprintRE   = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]+$`)
+	// ntpServerRE admits hostnames, IPv4 and IPv6 literals only. Server names
+	// are interpolated into a remote shell script, so anything outside this
+	// set (spaces, quotes, $, ;) is rejected at validation time.
+	ntpServerRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.:-]*$`)
 )
+
+// MaxTimeSyncWaitSeconds bounds how long the time_sync step may wait for the
+// clock to report synchronized.
+const MaxTimeSyncWaitSeconds = 3600
+
+// DefaultTimeSyncWaitSeconds is applied when time_sync is enabled and
+// wait_seconds is omitted.
+const DefaultTimeSyncWaitSeconds = 120
 
 type VMConfig struct {
 	Host               string `yaml:"host"`
@@ -54,10 +67,43 @@ type TalosConfig struct {
 }
 
 type ClusterConfig struct {
+	// Enabled controls the Talos steps (talosctl_install, cluster_create).
+	// Omitted means enabled, which keeps the behaviour of configs written
+	// before this field existed. Set to false to stop after OS hardening,
+	// time sync and Docker: the talos.* and cluster name/state/mount fields
+	// are then not required.
+	Enabled  *bool  `yaml:"enabled,omitempty"`
 	Name     string `yaml:"name"`
 	StateDir string `yaml:"state_dir"`
 	MountSrc string `yaml:"mount_src"`
 	MountDst string `yaml:"mount_dst"`
+}
+
+// IsEnabled reports whether the Talos-in-Docker cluster steps should run.
+// A nil Enabled (field omitted) means true.
+func (c ClusterConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// TimeSyncConfig controls the time_sync step. It is opt-in so that existing
+// configs keep their behaviour; production hosts should enable it.
+type TimeSyncConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Servers optionally replaces the NTP servers of the active time daemon
+	// (chrony when it is running, systemd-timesyncd otherwise). Empty keeps
+	// the distribution defaults.
+	Servers []string `yaml:"servers"`
+	// WaitSeconds is how long to wait for the kernel clock to report
+	// synchronized before failing. 0 means DefaultTimeSyncWaitSeconds.
+	WaitSeconds int `yaml:"wait_seconds"`
+}
+
+// EffectiveWaitSeconds returns WaitSeconds, or the default when unset.
+func (t TimeSyncConfig) EffectiveWaitSeconds() int {
+	if t.WaitSeconds <= 0 {
+		return DefaultTimeSyncWaitSeconds
+	}
+	return t.WaitSeconds
 }
 
 type TimeoutsConfig struct {
@@ -196,29 +242,11 @@ func (c Config) Validate() error {
 	if !isSafeVersionToken(c.Docker.Version) {
 		return fmt.Errorf("docker.version has invalid characters")
 	}
-	if strings.TrimSpace(c.Talos.Version) == "" {
-		return fmt.Errorf("talos.version is required")
+	if err := c.validateTalosAndCluster(); err != nil {
+		return err
 	}
-	if !isSafeVersionToken(c.Talos.Version) {
-		return fmt.Errorf("talos.version has invalid characters")
-	}
-	if strings.TrimSpace(c.Talos.SHA256Checksum) == "" {
-		return fmt.Errorf("talos.sha256_checksum is required")
-	}
-	if !sha256HexRE.MatchString(c.Talos.SHA256Checksum) {
-		return fmt.Errorf("talos.sha256_checksum must be a valid SHA256 hex digest")
-	}
-	if strings.TrimSpace(c.Cluster.Name) == "" {
-		return fmt.Errorf("cluster.name is required")
-	}
-	if strings.TrimSpace(c.Cluster.StateDir) == "" {
-		return fmt.Errorf("cluster.state_dir is required")
-	}
-	if strings.TrimSpace(c.Cluster.MountSrc) == "" {
-		return fmt.Errorf("cluster.mount_src is required")
-	}
-	if strings.TrimSpace(c.Cluster.MountDst) == "" {
-		return fmt.Errorf("cluster.mount_dst is required")
+	if err := c.TimeSync.validate(); err != nil {
+		return err
 	}
 	if c.Timeouts.SSHConnectSeconds <= 0 {
 		return fmt.Errorf("timeouts.ssh_connect_seconds must be > 0")
@@ -235,6 +263,58 @@ func (c Config) Validate() error {
 	for _, p := range c.Hardening.AllowTCPPorts {
 		if p <= 0 || p > 65535 {
 			return fmt.Errorf("hardening.allow_tcp_ports entries must be in range 1..65535 (got %d)", p)
+		}
+	}
+	return nil
+}
+
+// validateTalosAndCluster requires the Talos and cluster fields only when the
+// cluster steps will run. When the cluster is disabled, any Talos value that
+// IS present must still be well-formed, so a typo is never silently carried.
+func (c Config) validateTalosAndCluster() error {
+	if !c.Cluster.IsEnabled() {
+		if v := strings.TrimSpace(c.Talos.Version); v != "" && !isSafeVersionToken(v) {
+			return fmt.Errorf("talos.version has invalid characters")
+		}
+		if v := strings.TrimSpace(c.Talos.SHA256Checksum); v != "" && !sha256HexRE.MatchString(v) {
+			return fmt.Errorf("talos.sha256_checksum must be a valid SHA256 hex digest")
+		}
+		return nil
+	}
+	if strings.TrimSpace(c.Talos.Version) == "" {
+		return fmt.Errorf("talos.version is required (or set cluster.enabled: false)")
+	}
+	if !isSafeVersionToken(c.Talos.Version) {
+		return fmt.Errorf("talos.version has invalid characters")
+	}
+	if strings.TrimSpace(c.Talos.SHA256Checksum) == "" {
+		return fmt.Errorf("talos.sha256_checksum is required (or set cluster.enabled: false)")
+	}
+	if !sha256HexRE.MatchString(c.Talos.SHA256Checksum) {
+		return fmt.Errorf("talos.sha256_checksum must be a valid SHA256 hex digest")
+	}
+	if strings.TrimSpace(c.Cluster.Name) == "" {
+		return fmt.Errorf("cluster.name is required")
+	}
+	if strings.TrimSpace(c.Cluster.StateDir) == "" {
+		return fmt.Errorf("cluster.state_dir is required")
+	}
+	if strings.TrimSpace(c.Cluster.MountSrc) == "" {
+		return fmt.Errorf("cluster.mount_src is required")
+	}
+	if strings.TrimSpace(c.Cluster.MountDst) == "" {
+		return fmt.Errorf("cluster.mount_dst is required")
+	}
+	return nil
+}
+
+func (t TimeSyncConfig) validate() error {
+	if t.WaitSeconds < 0 || t.WaitSeconds > MaxTimeSyncWaitSeconds {
+		return fmt.Errorf("time_sync.wait_seconds must be in range 0..%d", MaxTimeSyncWaitSeconds)
+	}
+	for _, s := range t.Servers {
+		if !ntpServerRE.MatchString(s) {
+			return fmt.Errorf("time_sync.servers entry %q is not a valid hostname or IP address", s)
 		}
 	}
 	return nil

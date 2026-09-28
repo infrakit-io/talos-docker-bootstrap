@@ -26,6 +26,7 @@ type Step = model.StepResult
 var (
 	waitForTCPPortWithStatsFn = ssh.WaitForTCPPortWithStats
 	runOSHardeningFn          = runOSHardening
+	runTimeSyncFn             = runTimeSync
 	runDockerInstallFn        = runDockerInstall
 	runTalosctlInstallFn      = runTalosctlInstall
 	runClusterCreateFn        = runClusterCreate
@@ -40,33 +41,40 @@ func SetKnownHostsPrompt(fn func(message string) (bool, error)) func() {
 	return func() { knownHostsPromptFn = prev }
 }
 
+// Skip reasons recorded on steps that a config switches off. Exported so
+// callers and tests can match them without copying strings.
+const (
+	SkipReasonClusterDisabled  = "cluster.enabled is false"
+	SkipReasonTimeSyncDisabled = "time_sync.enabled is false"
+)
+
 func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, opts Options) (Result, error) {
+	clusterEnabled := cfg.Cluster.IsEnabled()
 	res := Result{
-		Status:         "running",
-		StartedAt:      time.Now().UTC(),
-		VMHost:         cfg.VM.Host,
-		VMUser:         cfg.VM.User,
-		Cluster:        cfg.Cluster.Name,
-		KubeconfigPath: filepath.Join(cfg.Cluster.StateDir, "kubeconfig"),
-		DryRun:         opts.DryRun,
+		Status:    "running",
+		StartedAt: time.Now().UTC(),
+		VMHost:    cfg.VM.Host,
+		VMUser:    cfg.VM.User,
+		DryRun:    opts.DryRun,
+	}
+	if clusterEnabled {
+		res.Cluster = cfg.Cluster.Name
+		res.KubeconfigPath = filepath.Join(cfg.Cluster.StateDir, "kubeconfig")
 	}
 
-	if opts.DryRun {
-		res.Steps = []Step{
-			{Name: "ssh_connectivity", Status: model.StepStatusPlanned, Message: "Check SSH TCP reachability"},
-			{Name: "os_hardening", Status: model.StepStatusPlanned, Message: "Apply idempotent OS hardening baseline"},
-			{Name: "docker_install", Status: model.StepStatusPlanned, Message: "Install pinned Docker version"},
-			{Name: "talosctl_install", Status: model.StepStatusPlanned, Message: "Install pinned talosctl and verify checksum"},
-			{Name: "cluster_create", Status: model.StepStatusPlanned, Message: "Create Talos-in-Docker cluster if missing"},
-		}
-		res.Status = "planned"
-		res.EndedAt = time.Now().UTC()
-		return res, nil
+	clusterSkip := ""
+	if !clusterEnabled {
+		clusterSkip = SkipReasonClusterDisabled
+	}
+	timeSyncSkip := ""
+	if !cfg.TimeSync.Enabled {
+		timeSyncSkip = SkipReasonTimeSyncDisabled
 	}
 
 	steps := []struct {
 		name string
 		desc string
+		skip string // non-empty: record the step as skipped with this reason
 		run  func(context.Context) error
 	}{
 		{
@@ -123,6 +131,14 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, opts Optio
 			},
 		},
 		{
+			name: "time_sync",
+			desc: "Ensure NTP time sync is active and the clock is synchronized",
+			skip: timeSyncSkip,
+			run: func(ctx context.Context) error {
+				return runTimeSyncFn(ctx, logger, cfg)
+			},
+		},
+		{
 			name: "docker_install",
 			desc: "Install pinned Docker version",
 			run: func(ctx context.Context) error {
@@ -132,6 +148,7 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, opts Optio
 		{
 			name: "talosctl_install",
 			desc: "Install pinned talosctl and verify checksum",
+			skip: clusterSkip,
 			run: func(ctx context.Context) error {
 				return runTalosctlInstallFn(ctx, logger, cfg)
 			},
@@ -139,14 +156,37 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, opts Optio
 		{
 			name: "cluster_create",
 			desc: "Create Talos-in-Docker cluster if missing",
+			skip: clusterSkip,
 			run: func(ctx context.Context) error {
 				return runClusterCreateFn(ctx, logger, cfg)
 			},
 		},
 	}
 
+	if opts.DryRun {
+		for _, s := range steps {
+			if s.skip != "" {
+				res.Steps = append(res.Steps, Step{Name: s.name, Status: model.StepStatusSkipped, Message: s.skip})
+				continue
+			}
+			res.Steps = append(res.Steps, Step{Name: s.name, Status: model.StepStatusPlanned, Message: s.desc})
+		}
+		res.Status = "planned"
+		res.EndedAt = time.Now().UTC()
+		return res, nil
+	}
+
 	total := len(steps)
 	for i, s := range steps {
+		if s.skip != "" {
+			if opts.HumanProgress {
+				fmt.Printf("\033[36m[%d/%d]\033[0m \033[1m%s\033[0m \033[90m(skipped: %s)\033[0m\n", i+1, total, humanStepLabel(s.name), s.skip)
+			} else {
+				logger.Info("step skipped", "step", s.name, "reason", s.skip)
+			}
+			res.Steps = append(res.Steps, Step{Name: s.name, Status: model.StepStatusSkipped, Message: s.skip})
+			continue
+		}
 		current := i + 1
 		pct := (current - 1) * 100 / total
 		if opts.HumanProgress {

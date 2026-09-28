@@ -2,7 +2,7 @@ module github.com/infrakit-io/talos-docker-bootstrap
 
 go 1.26.1
 
-toolchain go1.26.5
+toolchain go1.26.8
 
 require (
 	github.com/infrakit-io/cli-wizard-core v0.3.0

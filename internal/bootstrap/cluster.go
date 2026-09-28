@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -10,6 +11,10 @@ import (
 	"github.com/infrakit-io/talos-docker-bootstrap/internal/config"
 	"github.com/infrakit-io/talos-docker-bootstrap/internal/ssh"
 )
+
+// ErrClusterDisabled is returned by the cluster operations when the config
+// sets cluster.enabled: false, so no Talos state exists to query.
+var ErrClusterDisabled = errors.New("talos cluster is disabled in config (cluster.enabled: false)")
 
 func runClusterCreate(ctx context.Context, logger *slog.Logger, cfg config.Config) error {
 	script := fmt.Sprintf(`#!/usr/bin/env bash
@@ -102,6 +107,9 @@ fi
 }
 
 func ClusterStatus(ctx context.Context, logger *slog.Logger, cfg config.Config) (string, error) {
+	if !cfg.Cluster.IsEnabled() {
+		return "", ErrClusterDisabled
+	}
 	sshCfg := execConfig(cfg)
 	cmd := fmt.Sprintf("sudo -n -u %q -H env STATE_DIR=%q CLUSTER_NAME=%q bash -lc 'set -euo pipefail; out=\"$(talosctl cluster --name \"${CLUSTER_NAME}\" --state \"${STATE_DIR}\" show --provisioner docker 2>/dev/null || true)\"; if [ -z \"$(printf \"%%s\" \"$out\" | tr -d \"[:space:]\")\" ]; then echo \"No Talos-in-Docker cluster found on remote VM.\" >&2; exit 2; fi; printf \"%%s\\n\" \"$out\"'", cfg.VM.User, cfg.Cluster.StateDir, cfg.Cluster.Name)
 	stdout, stderr, err := sshRunCommandFn(ctx, sshCfg, cmd)
@@ -115,6 +123,9 @@ func ClusterStatus(ctx context.Context, logger *slog.Logger, cfg config.Config) 
 }
 
 func KubeconfigExport(ctx context.Context, logger *slog.Logger, cfg config.Config) (string, error) {
+	if !cfg.Cluster.IsEnabled() {
+		return "", ErrClusterDisabled
+	}
 	sshCfg := execConfig(cfg)
 	remotePath := filepath.Join(cfg.Cluster.StateDir, "kubeconfig")
 	talosConfigPath := filepath.Join(cfg.Cluster.StateDir, "talosconfig")
@@ -145,6 +156,9 @@ cat "${REMOTE_KUBECONFIG}"
 }
 
 func MountCheck(ctx context.Context, logger *slog.Logger, cfg config.Config) error {
+	if !cfg.Cluster.IsEnabled() {
+		return ErrClusterDisabled
+	}
 	script := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 
